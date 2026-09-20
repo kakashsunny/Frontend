@@ -1,0 +1,6 @@
+{
+  "name": "FinGuard AI",
+  "description": "Your Everyday Financial Intelligence Companion. Real-time financial pulse, proactive anomaly detection, spending intelligence, and AI financial copilot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
