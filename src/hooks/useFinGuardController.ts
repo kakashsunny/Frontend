@@ -1,295 +1,517 @@
+import { useCallback, useMemo, useState } from 'react';
+
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+  ActView,
+  FinancialDataset,
+  Transaction,
+} from '../types';
 
-import { ActView, FinancialDataset, Transaction } from '../types';
-import { REAL_HOUSEHOLD_DATASET } from '../data/datasets';
-import { InsightStory } from '../utils/insightStoryBuilder';
-
-export type StoryActionPayload = {
-  prompt?: string;
-  anomalyId?: string;
-};
-
-const TOAST_DURATION_MS = 3500;
+import {
+  InsightStory,
+} from '../utils/insightStoryBuilder';
 
 export function useFinGuardController() {
-  const [activeAct, setActiveAct] = useState<ActView>('see');
+  const [activeAct, setActiveAct] =
+    useState<ActView>('see');
 
-  const [dataset, setDataset] = useState<FinancialDataset | null>(
-    REAL_HOUSEHOLD_DATASET
-  );
-
-  const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
-  const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
-  const [showIngestionGate, setShowIngestionGate] = useState(false);
+  const [dataset, setDataset] =
+    useState<FinancialDataset | null>(null);
 
   const [selectedTransaction, setSelectedTransaction] =
     useState<Transaction | null>(null);
 
-  const [investigatingTransaction, setInvestigatingTransaction] =
-    useState<Transaction | null>(null);
+  const [isTransparencyOpen, setIsTransparencyOpen] =
+    useState(false);
 
-  const [activeStory, setActiveStory] = useState<InsightStory | null>(null);
+  const [isDatasetSwitcherOpen, setIsDatasetSwitcherOpen] =
+    useState(false);
+
+  const [isIngestionOpen, setIsIngestionOpen] =
+    useState(false);
+
+  const [selectedStory, setSelectedStory] =
+    useState<InsightStory | null>(null);
+
+  const [isInvestigationOpen, setIsInvestigationOpen] =
+    useState(false);
+
+  const [investigationTransaction, setInvestigationTransaction] =
+    useState<Transaction | null>(null);
 
   const [askInitialPrompt, setAskInitialPrompt] =
     useState<string | undefined>(undefined);
 
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] =
+    useState<string | null>(null);
 
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /*
+   * ============================================================
+   * TEMPORAL FINANCIAL DNA REPLAY
+   * ============================================================
+   */
 
-  const showToast = useCallback((message: string) => {
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
+  const [isReplayMode, setIsReplayMode] =
+    useState(false);
+
+  /*
+   * 0 → beginning of dataset
+   * 1 → complete dataset
+   */
+  const [replayProgress, setReplayProgress] =
+    useState(1);
+
+  /*
+   * Whether the replay animation is currently playing.
+   */
+  const [isReplayPlaying, setIsReplayPlaying] =
+    useState(false);
+
+  /*
+   * ------------------------------------------------------------
+   * Replay date range
+   * ------------------------------------------------------------
+   */
+
+  const replayTransactions = useMemo(() => {
+    if (!dataset?.transactions?.length) {
+      return [];
     }
 
-    setToastMessage(message);
+    return [...dataset.transactions].sort(
+      (a, b) =>
+        new Date(a.date).getTime() -
+        new Date(b.date).getTime()
+    );
+  }, [dataset]);
 
-    toastTimerRef.current = setTimeout(() => {
-      setToastMessage(null);
-      toastTimerRef.current = null;
-    }, TOAST_DURATION_MS);
-  }, []);
+  const replayStartDate =
+    replayTransactions[0]?.date ?? null;
 
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) {
-        clearTimeout(toastTimerRef.current);
-      }
-    };
-  }, []);
+  const replayEndDate =
+    replayTransactions[
+      replayTransactions.length - 1
+    ]?.date ?? null;
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+  /*
+   * Current replay cutoff.
+   *
+   * Example:
+   *
+   * progress = 0
+   * → first transaction
+   *
+   * progress = 0.5
+   * → approximately halfway through the ledger
+   *
+   * progress = 1
+   * → entire ledger
+   */
+  const replayCutoffIndex = useMemo(() => {
+    if (!replayTransactions.length) {
+      return 0;
+    }
 
-      if (activeStory) {
-        setActiveStory(null);
-        return;
-      }
+    if (replayProgress >= 1) {
+      return replayTransactions.length;
+    }
 
-      if (investigatingTransaction) {
-        setInvestigatingTransaction(null);
-        return;
-      }
-
-      if (isSwitcherOpen) {
-        setIsSwitcherOpen(false);
-        return;
-      }
-
-      if (isTransparencyOpen) {
-        setIsTransparencyOpen(false);
-        return;
-      }
-
-      if (selectedTransaction) {
-        setSelectedTransaction(null);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
+    return Math.max(
+      1,
+      Math.ceil(
+        replayProgress *
+          replayTransactions.length
+      )
+    );
   }, [
-    activeStory,
-    investigatingTransaction,
-    isSwitcherOpen,
-    isTransparencyOpen,
-    selectedTransaction,
+    replayProgress,
+    replayTransactions.length,
   ]);
 
-  const handleDatasetLoaded = useCallback(
-    (newDataset: FinancialDataset) => {
-      setDataset(newDataset);
-      setShowIngestionGate(false);
-      setActiveAct('see');
-
-      setActiveStory(null);
-      setInvestigatingTransaction(null);
-      setSelectedTransaction(null);
-      setAskInitialPrompt(undefined);
-
-      showToast(
-        `Successfully sequenced ledger: "${newDataset.name}" (${newDataset.transactions.length} nodes parsed)`
+  /*
+   * Transactions currently visible during replay.
+   */
+  const replayVisibleTransactions =
+    useMemo(() => {
+      return replayTransactions.slice(
+        0,
+        replayCutoffIndex
       );
-    },
-    [showToast]
-  );
+    }, [
+      replayTransactions,
+      replayCutoffIndex,
+    ]);
 
-  const handleDisputeAnomaly = useCallback(
-    (anomalyId: string) => {
-      if (!anomalyId) return;
+  /*
+   * Date represented by the current replay position.
+   */
+  const replayCurrentDate =
+    replayVisibleTransactions[
+      replayVisibleTransactions.length - 1
+    ]?.date ??
+    replayStartDate;
 
-      setDataset((previousDataset) => {
-        if (!previousDataset) return null;
+  /*
+   * ------------------------------------------------------------
+   * Replay statistics
+   *
+   * These are calculated ONLY from transactions currently
+   * revealed by the timeline.
+   * ------------------------------------------------------------
+   */
 
-        return {
-          ...previousDataset,
+  const replayStats = useMemo(() => {
+    const transactions =
+      replayVisibleTransactions;
 
-          anomalies: previousDataset.anomalies.map((anomaly) =>
-            anomaly.id === anomalyId
-              ? { ...anomaly, status: 'disputed' }
-              : anomaly
-          ),
-
-          transactions: previousDataset.transactions.map((transaction) =>
-            transaction.id === anomalyId
-              ? {
-                  ...transaction,
-                  status: 'cleared',
-                  tags: transaction.tags.includes('Disputed')
-                    ? transaction.tags
-                    : [...transaction.tags, 'Disputed'],
-                }
-              : transaction
-          ),
-        };
-      });
-
-      showToast('Anomaly marked as disputed.');
-    },
-    [showToast]
-  );
-
-  const handleAcknowledgeAnomaly = useCallback(
-    (anomalyId: string) => {
-      if (!anomalyId) return;
-
-      setDataset((previousDataset) => {
-        if (!previousDataset) return null;
-
-        return {
-          ...previousDataset,
-
-          anomalies: previousDataset.anomalies.map((anomaly) =>
-            anomaly.id === anomalyId
-              ? { ...anomaly, status: 'acknowledged' }
-              : anomaly
-          ),
-        };
-      });
-
-      showToast('Transaction acknowledged and added to the baseline.');
-    },
-    [showToast]
-  );
-
-  const handleProceedToAskWithPrompt = useCallback((prompt?: string) => {
-    setAskInitialPrompt(prompt);
-    setActiveStory(null);
-    setInvestigatingTransaction(null);
-    setActiveAct('ask');
-  }, []);
-
-  const handleOpenStory = useCallback((story: InsightStory) => {
-    setActiveStory(story);
-  }, []);
-
-  const handleInvestigateTransaction = useCallback(
-    (transaction: Transaction) => {
-      setInvestigatingTransaction(transaction);
-    },
-    []
-  );
-
-  const handleSelectAct = useCallback((act: ActView) => {
-    if (act !== 'ask') {
-      setAskInitialPrompt(undefined);
+    if (!transactions.length) {
+      return {
+        transactionCount: 0,
+        income: 0,
+        spending: 0,
+        net: 0,
+        anomalyCount: 0,
+        subscriptionCount: 0,
+      };
     }
 
-    setActiveStory(null);
-    setInvestigatingTransaction(null);
-    setSelectedTransaction(null);
-    setActiveAct(act);
+    let income = 0;
+    let spending = 0;
+    let anomalyCount = 0;
+    let subscriptionCount = 0;
+
+    transactions.forEach((tx) => {
+      if (tx.type === 'income') {
+        income += tx.amount;
+      } else {
+        spending += tx.amount;
+      }
+
+      if (tx.status === 'anomaly') {
+        anomalyCount++;
+      }
+
+      if (tx.isSubscription) {
+        subscriptionCount++;
+      }
+    });
+
+    return {
+      transactionCount:
+        transactions.length,
+
+      income,
+
+      spending,
+
+      net: income - spending,
+
+      anomalyCount,
+
+      subscriptionCount,
+    };
+  }, [replayVisibleTransactions]);
+
+  /*
+   * ------------------------------------------------------------
+   * Enter replay
+   * ------------------------------------------------------------
+   */
+
+  const handleStartReplay = useCallback(() => {
+    if (!dataset?.transactions?.length) {
+      return;
+    }
+
+    setIsReplayMode(true);
+    setIsReplayPlaying(false);
+    setReplayProgress(0);
+    setActiveAct('see');
+  }, [dataset]);
+
+  /*
+   * ------------------------------------------------------------
+   * Exit replay
+   * ------------------------------------------------------------
+   */
+
+  const handleExitReplay = useCallback(() => {
+    setIsReplayMode(false);
+    setIsReplayPlaying(false);
+    setReplayProgress(1);
   }, []);
 
-  const handleExecuteStoryAction = useCallback(
-    (actionType: string, payload?: StoryActionPayload) => {
-      setActiveStory(null);
+  /*
+   * ------------------------------------------------------------
+   * Timeline movement
+   * ------------------------------------------------------------
+   */
 
-      switch (actionType) {
-        case 'act_view':
-          setActiveAct('act');
-          showToast('Navigated to ACT 04 for intervention simulation.');
-          break;
+  const handleReplayProgressChange =
+    useCallback(
+      (value: number) => {
+        const nextValue = Math.max(
+          0,
+          Math.min(1, value)
+        );
 
-        case 'ask_view':
-          setActiveAct('ask');
+        setReplayProgress(nextValue);
+        setIsReplayPlaying(false);
+      },
+      []
+    );
 
-          if (payload?.prompt) {
-            setAskInitialPrompt(payload.prompt);
-          }
-          break;
+  /*
+   * ------------------------------------------------------------
+   * Play / pause
+   * ------------------------------------------------------------
+   */
 
-        case 'dispute':
-          if (payload?.anomalyId) {
-            handleDisputeAnomaly(payload.anomalyId);
-          }
-          break;
-
-        case 'acknowledge':
-          if (payload?.anomalyId) {
-            handleAcknowledgeAnomaly(payload.anomalyId);
-          }
-          break;
-
-        default:
-          setActiveAct('act');
+  const handleToggleReplay =
+    useCallback(() => {
+      if (!isReplayMode) {
+        return;
       }
-    },
-    [
-      handleAcknowledgeAnomaly,
-      handleDisputeAnomaly,
-      showToast,
-    ]
-  );
 
-  const activeAnomalyCount = useMemo(
-    () =>
-      dataset?.anomalies.filter(
-        (anomaly) => anomaly.status === 'detected'
-      ).length ?? 0,
-    [dataset]
-  );
+      /*
+       * If we reached the end, pressing play starts again.
+       */
+      if (replayProgress >= 1) {
+        setReplayProgress(0);
+        setIsReplayPlaying(true);
+        return;
+      }
+
+      setIsReplayPlaying(
+        (current) => !current
+      );
+    }, [
+      isReplayMode,
+      replayProgress,
+    ]);
+
+  /*
+   * ------------------------------------------------------------
+   * Replay completion
+   * ------------------------------------------------------------
+   */
+
+  const handleReplayComplete =
+    useCallback(() => {
+      setReplayProgress(1);
+      setIsReplayPlaying(false);
+    }, []);
+
+  /*
+   * ------------------------------------------------------------
+   * Existing application actions
+   * ------------------------------------------------------------
+   */
+
+  const handleProceedToAskWithPrompt =
+    useCallback(
+      (prompt?: string) => {
+        setAskInitialPrompt(prompt);
+        setActiveAct('ask');
+      },
+      []
+    );
+
+  const handleOpenStory =
+    useCallback(
+      (story: InsightStory) => {
+        setSelectedStory(story);
+      },
+      []
+    );
+
+  const handleCloseStory =
+    useCallback(() => {
+      setSelectedStory(null);
+    }, []);
+
+  const handleDisputeAnomaly =
+    useCallback((anomalyId: string) => {
+      setToast(
+        `Anomaly ${anomalyId} marked for verification.`
+      );
+
+      window.setTimeout(() => {
+        setToast(null);
+      }, 2800);
+    }, []);
+
+  const handleAcknowledgeAnomaly =
+    useCallback((anomalyId: string) => {
+      setToast(
+        `Anomaly ${anomalyId} acknowledged.`
+      );
+
+      window.setTimeout(() => {
+        setToast(null);
+      }, 2800);
+    }, []);
+
+  const handleInvestigateTransaction =
+    useCallback(
+      (transaction: Transaction) => {
+        setInvestigationTransaction(
+          transaction
+        );
+
+        setIsInvestigationOpen(true);
+      },
+      []
+    );
+
+  const handleCloseInvestigation =
+    useCallback(() => {
+      setIsInvestigationOpen(false);
+      setInvestigationTransaction(null);
+    }, []);
+
+  const handleLoadDataset =
+    useCallback(
+      (nextDataset: FinancialDataset) => {
+        setDataset(nextDataset);
+
+        /*
+         * New dataset = fresh replay.
+         */
+        setReplayProgress(1);
+        setIsReplayMode(false);
+        setIsReplayPlaying(false);
+
+        setSelectedTransaction(null);
+        setActiveAct('see');
+
+        setIsIngestionOpen(false);
+
+        setToast(
+          `Loaded ${nextDataset.transactions.length.toLocaleString(
+            'en-IN'
+          )} transactions.`
+        );
+
+        window.setTimeout(() => {
+          setToast(null);
+        }, 2800);
+      },
+      []
+    );
+
+  const handleOpenDatasetSwitcher =
+    useCallback(() => {
+      setIsDatasetSwitcherOpen(true);
+    }, []);
+
+  const handleCloseDatasetSwitcher =
+    useCallback(() => {
+      setIsDatasetSwitcherOpen(false);
+    }, []);
+
+  const handleOpenIngestion =
+    useCallback(() => {
+      setIsIngestionOpen(true);
+    }, []);
+
+  const handleCloseIngestion =
+    useCallback(() => {
+      setIsIngestionOpen(false);
+    }, []);
+
+  /*
+   * ------------------------------------------------------------
+   * Return controller
+   * ------------------------------------------------------------
+   */
 
   return {
+    /*
+     * Core app state
+     */
     activeAct,
-    dataset,
-    isSwitcherOpen,
-    isTransparencyOpen,
-    showIngestionGate,
-    selectedTransaction,
-    investigatingTransaction,
-    activeStory,
-    askInitialPrompt,
-    toastMessage,
-    activeAnomalyCount,
-
-    hasDataset: Boolean(dataset),
-
     setActiveAct,
-    setIsSwitcherOpen,
-    setIsTransparencyOpen,
-    setShowIngestionGate,
-    setSelectedTransaction,
-    setInvestigatingTransaction,
-    setActiveStory,
 
-    handleDatasetLoaded,
+    dataset,
+    setDataset,
+
+    selectedTransaction,
+    setSelectedTransaction,
+
+    isTransparencyOpen,
+    setIsTransparencyOpen,
+
+    isDatasetSwitcherOpen,
+    setIsDatasetSwitcherOpen,
+
+    isIngestionOpen,
+    setIsIngestionOpen,
+
+    selectedStory,
+    setSelectedStory,
+
+    isInvestigationOpen,
+    setIsInvestigationOpen,
+
+    investigationTransaction,
+    setInvestigationTransaction,
+
+    askInitialPrompt,
+    toast,
+
+    /*
+     * Dataset
+     */
+    handleLoadDataset,
+    handleOpenDatasetSwitcher,
+    handleCloseDatasetSwitcher,
+    handleOpenIngestion,
+    handleCloseIngestion,
+
+    /*
+     * Existing workflows
+     */
+    handleProceedToAskWithPrompt,
     handleDisputeAnomaly,
     handleAcknowledgeAnomaly,
-    handleProceedToAskWithPrompt,
     handleOpenStory,
+    handleCloseStory,
     handleInvestigateTransaction,
-    handleSelectAct,
-    handleExecuteStoryAction,
+    handleCloseInvestigation,
+
+    /*
+     * ==========================================================
+     * TEMPORAL REPLAY API
+     * ==========================================================
+     */
+    isReplayMode,
+
+    replayProgress,
+
+    isReplayPlaying,
+
+    replayTransactions,
+
+    replayVisibleTransactions,
+
+    replayStartDate,
+
+    replayEndDate,
+
+    replayCurrentDate,
+
+    replayCutoffIndex,
+
+    replayStats,
+
+    handleStartReplay,
+
+    handleExitReplay,
+
+    handleReplayProgressChange,
+
+    handleToggleReplay,
+
+    handleReplayComplete,
   };
 }
