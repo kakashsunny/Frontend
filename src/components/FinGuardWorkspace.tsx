@@ -1,30 +1,41 @@
-import React, { Dispatch, SetStateAction } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import React, { Dispatch, SetStateAction } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 
-import { ActView, FinancialDataset, Transaction, InsightStory } from "../types";
-import ActSee from "./ActSee";
-import ActUnderstand from "./ActUnderstand";
-import ActAsk from "./ActAsk";
-import ActAct from "./ActAct";
+import {
+  ActView,
+  FinancialDataset,
+  Transaction,
+} from '../types';
 
-interface FinGuardWorkspaceProps {
+import { InsightStory } from '../utils/insightStoryBuilder';
+
+import { ActSee } from './ActSee';
+import { ActUnderstand } from './ActUnderstand';
+import { ActAsk } from './ActAsk';
+import { ActAct } from './ActAct';
+
+type FinGuardWorkspaceProps = {
   activeAct: ActView;
   dataset: FinancialDataset;
 
   askInitialPrompt?: string;
 
   setActiveAct: Dispatch<SetStateAction<ActView>>;
-  setSelectedTransaction: Dispatch<SetStateAction<Transaction | null>>;
+  setSelectedTransaction: Dispatch<
+    SetStateAction<Transaction | null>
+  >;
   setIsTransparencyOpen: Dispatch<SetStateAction<boolean>>;
 
   handleProceedToAskWithPrompt: (prompt?: string) => void;
   handleDisputeAnomaly: (anomalyId: string) => void;
   handleAcknowledgeAnomaly: (anomalyId: string) => void;
   handleOpenStory: (story: InsightStory) => void;
-  handleInvestigateTransaction: (transaction: Transaction) => void;
-}
+  handleInvestigateTransaction: (
+    transaction: Transaction
+  ) => void;
+};
 
-const FinGuardWorkspace: React.FC<FinGuardWorkspaceProps> = ({
+export function FinGuardWorkspace({
   activeAct,
   dataset,
   askInitialPrompt,
@@ -36,33 +47,43 @@ const FinGuardWorkspace: React.FC<FinGuardWorkspaceProps> = ({
   handleAcknowledgeAnomaly,
   handleOpenStory,
   handleInvestigateTransaction,
-}) => {
+}: FinGuardWorkspaceProps) {
   return (
     <AnimatePresence mode="wait" initial={false}>
-      {activeAct === "see" && (
-        <motion.div
+      {activeAct === 'see' && (
+        <motion.section
           key="see"
-          initial={{ opacity: 0, y: 16 }}
+          aria-label="Financial overview"
+          initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -16 }}
-          transition={{ duration: 0.35 }}
+          exit={{ opacity: 0, y: -12 }}
+          transition={{ duration: 0.22 }}
         >
           <ActSee
             dataset={dataset}
-            onProceedToUnderstand={() => setActiveAct("understand")}
+            onProceedToUnderstand={() =>
+              setActiveAct('understand')
+            }
             onSelectTransaction={setSelectedTransaction}
-            onOpenTransparency={() => setIsTransparencyOpen(true)}
+            onOpenTransparencyModal={() =>
+              setIsTransparencyOpen(true)
+            }
+            onOpenStory={handleOpenStory}
+            onInvestigateTransaction={
+              handleInvestigateTransaction
+            }
           />
-        </motion.div>
+        </motion.section>
       )}
 
-      {activeAct === "understand" && (
-        <motion.div
+      {activeAct === 'understand' && (
+        <motion.section
           key="understand"
-          initial={{ opacity: 0, y: 16 }}
+          aria-label="Financial intelligence"
+          initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -16 }}
-          transition={{ duration: 0.35 }}
+          exit={{ opacity: 0, y: -12 }}
+          transition={{ duration: 0.22 }}
         >
           <ActUnderstand
             dataset={dataset}
@@ -70,43 +91,51 @@ const FinGuardWorkspace: React.FC<FinGuardWorkspaceProps> = ({
             onDisputeAnomaly={handleDisputeAnomaly}
             onAcknowledgeAnomaly={handleAcknowledgeAnomaly}
             onOpenStory={handleOpenStory}
-            onInvestigateTransaction={handleInvestigateTransaction}
+            onInvestigateTransaction={
+              handleInvestigateTransaction
+            }
           />
-        </motion.div>
+        </motion.section>
       )}
 
-      {activeAct === "ask" && (
-        <motion.div
+      {activeAct === 'ask' && (
+        <motion.section
           key="ask"
-          initial={{ opacity: 0, y: 16 }}
+          aria-label="AI financial copilot"
+          initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -16 }}
-          transition={{ duration: 0.35 }}
+          exit={{ opacity: 0, y: -12 }}
+          transition={{ duration: 0.22 }}
         >
           <ActAsk
             dataset={dataset}
             initialPrompt={askInitialPrompt}
-            onProceedToAct={() => setActiveAct("act")}
+            onProceedToAct={() =>
+              setActiveAct('act')
+            }
+            onSelectTransaction={setSelectedTransaction}
+            onOpenStory={handleOpenStory}
           />
-        </motion.div>
+        </motion.section>
       )}
 
-      {activeAct === "act" && (
-        <motion.div
+      {activeAct === 'act' && (
+        <motion.section
           key="act"
-          initial={{ opacity: 0, y: 16 }}
+          aria-label="Financial action center"
+          initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -16 }}
-          transition={{ duration: 0.35 }}
+          exit={{ opacity: 0, y: -12 }}
+          transition={{ duration: 0.22 }}
         >
           <ActAct
             dataset={dataset}
-            onOpenTransparency={() => setIsTransparencyOpen(true)}
+            onOpenTransparencyModal={() =>
+              setIsTransparencyOpen(true)
+            }
           />
-        </motion.div>
+        </motion.section>
       )}
     </AnimatePresence>
   );
-};
-
-export default FinGuardWorkspace;
+}
