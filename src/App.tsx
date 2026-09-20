@@ -1,15 +1,6 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CheckCircle2 } from 'lucide-react';
-
-import { ActView, FinancialDataset, Transaction } from './types';
-import { REAL_HOUSEHOLD_DATASET } from './data/datasets';
 
 import { FloatingNav } from './components/FloatingNav';
 import { ActSee } from './components/ActSee';
@@ -22,263 +13,41 @@ import { DatasetSwitcherModal } from './components/DatasetSwitcherModal';
 import { CalculationTransparencyModal } from './components/CalculationTransparencyModal';
 import { InsightStoryView } from './components/InsightStoryView';
 import { TransactionInvestigationMode } from './components/TransactionInvestigationMode';
-import { InsightStory } from './utils/insightStoryBuilder';
 
-type StoryActionPayload = {
-  prompt?: string;
-  anomalyId?: string;
-};
-
-const TOAST_DURATION_MS = 3500;
+import { useFinGuardController } from './hooks/useFinGuardController';
 
 export default function App() {
-  const [activeAct, setActiveAct] = useState<ActView>('see');
-  const [dataset, setDataset] = useState<FinancialDataset | null>(
-    REAL_HOUSEHOLD_DATASET
-  );
-
-  const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
-  const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
-  const [showIngestionGate, setShowIngestionGate] = useState(false);
-
-  const [selectedTransaction, setSelectedTransaction] =
-    useState<Transaction | null>(null);
-
-  const [investigatingTransaction, setInvestigatingTransaction] =
-    useState<Transaction | null>(null);
-
-  const [activeStory, setActiveStory] = useState<InsightStory | null>(null);
-
-  const [askInitialPrompt, setAskInitialPrompt] = useState<
-    string | undefined
-  >(undefined);
-
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  /*
-   * Keep the toast timer under control so repeated notifications
-   * never leave orphaned timers behind.
-   */
-  const showToast = useCallback((message: string) => {
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
-    }
-
-    setToastMessage(message);
-
-    toastTimerRef.current = setTimeout(() => {
-      setToastMessage(null);
-      toastTimerRef.current = null;
-    }, TOAST_DURATION_MS);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) {
-        clearTimeout(toastTimerRef.current);
-      }
-    };
-  }, []);
-
-  /*
-   * Escape closes temporary overlays.
-   * This gives keyboard users a predictable way to leave
-   * Investigation / Story / modal states.
-   */
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-
-      if (activeStory) {
-        setActiveStory(null);
-        return;
-      }
-
-      if (investigatingTransaction) {
-        setInvestigatingTransaction(null);
-        return;
-      }
-
-      if (isSwitcherOpen) {
-        setIsSwitcherOpen(false);
-        return;
-      }
-
-      if (isTransparencyOpen) {
-        setIsTransparencyOpen(false);
-        return;
-      }
-
-      if (selectedTransaction) {
-        setSelectedTransaction(null);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [
-    activeStory,
-    investigatingTransaction,
+  const {
+    activeAct,
+    dataset,
     isSwitcherOpen,
     isTransparencyOpen,
+    showIngestionGate,
     selectedTransaction,
-  ]);
+    investigatingTransaction,
+    activeStory,
+    askInitialPrompt,
+    toastMessage,
+    activeAnomalyCount,
+    hasDataset,
 
-  const handleDatasetLoaded = useCallback(
-    (newDataset: FinancialDataset) => {
-      setDataset(newDataset);
-      setShowIngestionGate(false);
-      setActiveAct('see');
+    setIsSwitcherOpen,
+    setIsTransparencyOpen,
+    setShowIngestionGate,
+    setSelectedTransaction,
+    setInvestigatingTransaction,
+    setActiveStory,
+    setActiveAct,
 
-      setActiveStory(null);
-      setInvestigatingTransaction(null);
-      setSelectedTransaction(null);
-      setAskInitialPrompt(undefined);
-
-      showToast(
-        `Successfully sequenced ledger: "${newDataset.name}" (${newDataset.transactions.length} nodes parsed)`
-      );
-    },
-    [showToast]
-  );
-
-  const handleDisputeAnomaly = useCallback(
-    (anomalyId: string) => {
-      if (!anomalyId) return;
-
-      setDataset((previousDataset) => {
-        if (!previousDataset) return null;
-
-        return {
-          ...previousDataset,
-
-          anomalies: previousDataset.anomalies.map((anomaly) =>
-            anomaly.id === anomalyId
-              ? { ...anomaly, status: 'disputed' }
-              : anomaly
-          ),
-
-          transactions: previousDataset.transactions.map((transaction) =>
-            transaction.id === anomalyId
-              ? {
-                  ...transaction,
-                  status: 'cleared',
-                  tags: transaction.tags.includes('Disputed')
-                    ? transaction.tags
-                    : [...transaction.tags, 'Disputed'],
-                }
-              : transaction
-          ),
-        };
-      });
-
-      showToast('Anomaly marked as disputed.');
-    },
-    [showToast]
-  );
-
-  const handleAcknowledgeAnomaly = useCallback(
-    (anomalyId: string) => {
-      if (!anomalyId) return;
-
-      setDataset((previousDataset) => {
-        if (!previousDataset) return null;
-
-        return {
-          ...previousDataset,
-          anomalies: previousDataset.anomalies.map((anomaly) =>
-            anomaly.id === anomalyId
-              ? { ...anomaly, status: 'acknowledged' }
-              : anomaly
-          ),
-        };
-      });
-
-      showToast('Transaction acknowledged and added to the baseline.');
-    },
-    [showToast]
-  );
-
-  const handleProceedToAskWithPrompt = useCallback(
-    (prompt?: string) => {
-      setAskInitialPrompt(prompt);
-      setActiveStory(null);
-      setInvestigatingTransaction(null);
-      setActiveAct('ask');
-    },
-    []
-  );
-
-  const handleOpenStory = useCallback((story: InsightStory) => {
-    setActiveStory(story);
-  }, []);
-
-  const handleInvestigateTransaction = useCallback((transaction: Transaction) => {
-    setInvestigatingTransaction(transaction);
-  }, []);
-
-  const handleSelectAct = useCallback((act: ActView) => {
-    if (act !== 'ask') {
-      setAskInitialPrompt(undefined);
-    }
-
-    setActiveStory(null);
-    setInvestigatingTransaction(null);
-    setSelectedTransaction(null);
-    setActiveAct(act);
-  }, []);
-
-  const handleExecuteStoryAction = useCallback(
-    (actionType: string, payload?: StoryActionPayload) => {
-      setActiveStory(null);
-
-      switch (actionType) {
-        case 'act_view':
-          setActiveAct('act');
-          showToast('Navigated to ACT 04 for intervention simulation.');
-          break;
-
-        case 'ask_view':
-          setActiveAct('ask');
-
-          if (payload?.prompt) {
-            setAskInitialPrompt(payload.prompt);
-          }
-          break;
-
-        case 'dispute':
-          if (payload?.anomalyId) {
-            handleDisputeAnomaly(payload.anomalyId);
-          }
-          break;
-
-        case 'acknowledge':
-          if (payload?.anomalyId) {
-            handleAcknowledgeAnomaly(payload.anomalyId);
-          }
-          break;
-
-        default:
-          setActiveAct('act');
-      }
-    },
-    [handleAcknowledgeAnomaly, handleDisputeAnomaly, showToast]
-  );
-
-  const activeAnomalyCount = useMemo(
-    () =>
-      dataset?.anomalies.filter(
-        (anomaly) => anomaly.status === 'detected'
-      ).length ?? 0,
-    [dataset]
-  );
-
-  const hasDataset = Boolean(dataset);
+    handleDatasetLoaded,
+    handleDisputeAnomaly,
+    handleAcknowledgeAnomaly,
+    handleProceedToAskWithPrompt,
+    handleOpenStory,
+    handleInvestigateTransaction,
+    handleSelectAct,
+    handleExecuteStoryAction,
+  } = useFinGuardController();
 
   return (
     <div
@@ -286,7 +55,6 @@ export default function App() {
         selection:bg-emerald-500/30 selection:text-emerald-300
         relative overflow-x-hidden font-sans"
     >
-      {/* Decorative background only. Hidden from assistive technology. */}
       <div
         aria-hidden="true"
         className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-30"
@@ -296,7 +64,6 @@ export default function App() {
         <div className="absolute bottom-10 left-10 w-[500px] h-[500px] bg-purple-600/10 blur-[160px] rounded-full" />
       </div>
 
-      {/* Accessible live status for important application feedback. */}
       <div
         className="sr-only"
         role="status"
@@ -326,7 +93,6 @@ export default function App() {
               aria-hidden="true"
               className="w-4 h-4 text-emerald-400 shrink-0"
             />
-
             <span className="break-words">{toastMessage}</span>
           </motion.div>
         )}
@@ -377,9 +143,7 @@ export default function App() {
               >
                 <ActSee
                   dataset={dataset}
-                  onProceedToUnderstand={() =>
-                    setActiveAct('understand')
-                  }
+                  onProceedToUnderstand={() => setActiveAct('understand')}
                   onSelectTransaction={setSelectedTransaction}
                   onOpenTransparencyModal={() =>
                     setIsTransparencyOpen(true)
@@ -551,9 +315,8 @@ export default function App() {
             text-slate-500 max-w-2xl mx-auto
             leading-relaxed font-sans"
         >
-          Crafted for AI for Everyday Life Hackathon •
-          Client-side deterministic vectorization with zero cloud
-          data retention.
+          Crafted for AI for Everyday Life Hackathon • Client-side
+          deterministic vectorization with zero cloud data retention.
         </p>
       </footer>
     </div>
